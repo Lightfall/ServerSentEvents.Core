@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Text;
 
 namespace ServerSentEvents.Core
@@ -32,14 +33,14 @@ namespace ServerSentEvents.Core
 
 
         private readonly ConcurrentDictionary<string, HttpContext> _sessions;
-        private readonly ConcurrentDictionary<string, List<string>> _topics;
+        private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, HttpContext>> _topics;
         private readonly Func<HttpContext, bool> _isSubscription;
         private readonly Func<HttpContext, string> _getTopicName;
 
         public ServerSentEventsService(Func<HttpContext, bool> isSubscription, Func<HttpContext, string> getTopicName)
         {
             this._isSubscription = isSubscription;
-            this._topics = new ConcurrentDictionary<string, List<string>>();
+            this._topics = new ConcurrentDictionary<string, ConcurrentDictionary<string, HttpContext>>();
             this._getTopicName = getTopicName;
             this._sessions = new ConcurrentDictionary<string, HttpContext>();
         }
@@ -53,14 +54,14 @@ namespace ServerSentEvents.Core
 
             string topicName = _getTopicName(context);
             string sessionId = context.Connection.Id;
-            if (_topics.TryGetValue(topicName, out List<string> followers))
+            if (_topics.TryGetValue(topicName, out ConcurrentDictionary<string, HttpContext> followers))
             {
-                followers.Add(sessionId);
+                followers.TryAdd(context.Connection.Id,context);
             }
             else
             {
-                followers = new List<string>();
-                followers.Add(sessionId);
+                followers = new ConcurrentDictionary<string, HttpContext>();
+                followers.TryAdd(context.Connection.Id, context);
                 _topics.TryAdd(topicName, followers);
             }
 
@@ -102,6 +103,10 @@ namespace ServerSentEvents.Core
             finally
             {
                 _sessions.Remove(id, out HttpContext value);
+                foreach (var topic in _topics)
+                {
+                    topic.Value.Remove(id, out HttpContext x);
+                }
                 OnSessionEnded?.Invoke(this, new SessionEndedEventArgs(id));
             }
 
@@ -127,6 +132,10 @@ namespace ServerSentEvents.Core
                 {
                     try
                     {
+                        if (session.Key != session.Value.Connection.Id)
+                        {
+                            Debugger.Break();
+                        }
                         session.Value.Response.WriteAsync($"data: {message}\n\n");
                         session.Value.Response.Body.Flush();
                     }
@@ -138,30 +147,39 @@ namespace ServerSentEvents.Core
             }
             else
             {
-                if (_topics.TryGetValue(topicName, out List<string> followers))
+                if (_topics.TryGetValue(topicName, out ConcurrentDictionary<string, HttpContext> followers))
                 {
-                    foreach (var followerId in followers)
+                    List<string> itemsToRemovex = new List<string>();
+                    foreach (var follower in followers)
                     {
-                        if (_sessions.TryGetValue(followerId, out HttpContext context))
+
+                        try
                         {
-                            try
-                            {
-                                context.Response.WriteAsync($"data: {message}\n\n");
-                                context.Response.Body.Flush();
-                            }
-                            catch (ObjectDisposedException)
-                            {
-                                itemsToRemove.Add(followerId);
-                            }
+                            follower.Value.Response.WriteAsync($"data: {message}\n\n");
+                            follower.Value.Response.Body.Flush();
                         }
+                        catch (ObjectDisposedException)
+                        {
+                            itemsToRemove.Add(follower.Value.Connection.Id);
+                            itemsToRemovex.Add(follower.Key);
+                        }
+
                     }
+                    itemsToRemove.ForEach(ids =>
+                    {
+                        followers.Remove(ids, out HttpContext context);
+                    });
                 }
             }
 
             itemsToRemove.ForEach(ids =>
             {
+                
                 _sessions.Remove(ids, out HttpContext context);
-                context.Abort();
+                if (context != null)
+                {
+                    context.Abort(); 
+                }
             });
             OnMessagePushed?.Invoke(this, new MessagePushedEventArgs(message, topicName));
         }

@@ -1,0 +1,88 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title></title>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+</head>
+<body>
+    <label>Room Name:</label><input type="text" name="roomName" id="roomName" value="Default" /><br />
+    <button onclick="joinRoom()">Join</button><br />
+    <br />
+    <label>Message:</label><input type="text" name="message" id="message" value="" /><br />
+    <button onclick="sendMessage()">Send</button><br />
+    <br />
+    <label>RepeatCount:</label><input type="text" name="repeatCount" id="repeatCount" value="1000" /><br />
+    <button onclick="repeatTest()">Send</button><br />
+    <br />
+    <div id="targetDiv"></div>
+
+    <script>
+
+
+        function joinRoom() {
+            if (window.EventSource == undefined) {
+                // If not supported
+                document.getElementById('targetDiv').innerHTML = "Your browser doesn't support Server Sent Events.";
+                return;
+            } else {
+                var source = new EventSource('/chatroom?joinroom=' + document.getElementById('roomName').value);
+
+                source.onopen = function (event) {
+                    document.getElementById('targetDiv').innerHTML += 'Connection Opened.<br>';
+                };
+
+                source.onerror = function (event) {
+                    if (event.eventPhase == EventSource.CLOSED) {
+                        document.getElementById('targetDiv').innerHTML += 'Connection Closed.<br>';
+                    } else {
+                        document.getElementById('targetDiv').innerHTML += JSON.stringify(event);
+                    }
+                };
+
+                source.onmessage = function (event) {
+                    document.getElementById('targetDiv').innerHTML += event.data + '<br>';
+                };
+            }
+        }
+
+        function sendMessage() {
+            let message = document.getElementById('message').value;
+            let msg = { message: message,count:1 };
+
+            sendMessageX(msg)
+        }
+
+        function repeatTest() {
+            debugger;
+            let message = document.getElementById('message').value;
+            let repeatCountStr = document.getElementById('repeatCount').value;
+            let count = parseInt(repeatCountStr);
+           
+                sendMessageX({ message: message, count: count });
+            
+        }
+
+
+        function sendMessageX(messageObject) {
+            let roomName = document.getElementById('roomName').value;
+           
+            var dataType = 'application/json; charset=utf-8';
+            $.ajax({
+                type: 'POST',
+                url: '/api/chat/' + roomName,
+                dataType: 'json',
+                contentType: dataType,
+                data: JSON.stringify(messageObject),
+                success: function (result) {
+                    alert('Data received: ');
+
+                }
+            });
+        }
+
+
+
+    </script>
+</body>
+</html>
